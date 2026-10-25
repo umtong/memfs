@@ -1,6 +1,12 @@
-import { posix } from '@jsonjoy.com/fs-node-builtins/lib/path';
 import { constants, pathDirname, pathJoin } from '@jsonjoy.com/fs-node-utils';
-import { createError, ERROR_CODE, SystemError, type ErrnoException, type Superblock } from '@jsonjoy.com/fs-core';
+import {
+  createError,
+  ERROR_CODE,
+  resolve,
+  SystemError,
+  type ErrnoException,
+  type Superblock,
+} from '@jsonjoy.com/fs-core';
 import { withCode, withNativeCode } from '@jsonjoy.com/fs-node-utils/lib/argErrors';
 import {
   validateBoolean,
@@ -12,7 +18,8 @@ import type Stats from './Stats';
 import type { Volume } from './volume';
 import type * as opts from '@jsonjoy.com/fs-node-utils/lib/types/options';
 
-const pathResolve = posix.resolve;
+const pathResolve = (vol: Volume, ...paths: string[]): string =>
+  paths.reduce((base, path) => resolve(path, base) || '/', vol._core.process.cwd());
 const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, COPYFILE_EXCL, COPYFILE_FICLONE_FORCE } = constants;
 
 /** Linux errno numbers. */
@@ -154,16 +161,16 @@ export const copyFileCore = (core: Superblock, src: string, dest: string, flags:
   }
 };
 
-const toParts = (path: string): string[] => {
-  const raw = pathResolve(path).split('/');
+const toParts = (vol: Volume, path: string): string[] => {
+  const raw = pathResolve(vol, path).split('/');
   const parts: string[] = [];
   for (let i = 0; i < raw.length; i++) if (raw[i]) parts.push(raw[i]);
   return parts;
 };
 
-const isSrcSubdir = (src: string, dest: string): boolean => {
-  const srcArr = toParts(src);
-  const destArr = toParts(dest);
+const isSrcSubdir = (vol: Volume, src: string, dest: string): boolean => {
+  const srcArr = toParts(vol, src);
+  const destArr = toParts(vol, dest);
   const length = srcArr.length;
   if (length > destArr.length) return false;
   for (let i = 0; i < length; i++) if (destArr[i] !== srcArr[i]) return false;
@@ -206,7 +213,7 @@ const setDestTimestamps = (vol: Volume, src: string, dest: string): void => {
 
 const resolveLinkTarget = (vol: Volume, src: string, verbatimSymlinks: boolean): string => {
   const target = String(vol.readlinkSync(src));
-  return !verbatimSymlinks && target[0] !== '/' ? pathResolve(pathDirname(src), target) : target;
+  return !verbatimSymlinks && target[0] !== '/' ? pathResolve(vol, pathDirname(src), target) : target;
 };
 
 /** `std::filesystem::equivalent` */
@@ -250,8 +257,8 @@ const checkPathsSync = (vol: Volume, src: string, dest: string, dereference: boo
     destStat = statOf(vol, dest, dereference);
   } catch {}
   const srcIsDir = srcStat.isDirectory() || (dereference && srcStat.isSymbolicLink());
-  const srcPath = pathResolve(src);
-  const destPath = pathResolve(dest);
+  const srcPath = pathResolve(vol, src);
+  const destPath = pathResolve(vol, dest);
   if (destStat) {
     if (identicalPaths(vol, srcPath, destPath))
       throw cpCodeError('ERR_FS_CP_EINVAL', 'src and dest cannot be the same ' + destPath);
@@ -394,10 +401,10 @@ const onLinkSync = (
     }
     throw error;
   }
-  if (resolvedDest[0] !== '/') resolvedDest = pathResolve(pathDirname(dest), resolvedDest);
-  if (isDirectory(vol, src) && isSrcSubdir(resolvedSrc, resolvedDest))
+  if (resolvedDest[0] !== '/') resolvedDest = pathResolve(vol, pathDirname(dest), resolvedDest);
+  if (isDirectory(vol, src) && isSrcSubdir(vol, resolvedSrc, resolvedDest))
     throw cpCodeError('ERR_FS_CP_EINVAL', 'Cannot copy ' + resolvedSrc + ' to a subdirectory of self ' + resolvedDest);
-  if (isDirectory(vol, dest) && isSrcSubdir(resolvedDest, resolvedSrc))
+  if (isDirectory(vol, dest) && isSrcSubdir(vol, resolvedDest, resolvedSrc))
     throw cpCodeError('ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY', 'cannot overwrite ' + resolvedDest + ' with ' + resolvedSrc);
   vol.unlinkSync(dest);
   vol.symlinkSync(resolvedSrc, dest);
@@ -449,7 +456,7 @@ const checkPaths = async (
         'ENOTDIR',
       );
   }
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest))
+  if (srcStat.isDirectory() && isSrcSubdir(vol, src, dest))
     throw cpSystemError(
       'ERR_FS_CP_EINVAL',
       'cannot copy ' + src + ' to a subdirectory of self ' + dest,
@@ -461,11 +468,11 @@ const checkPaths = async (
 };
 
 const checkParentPaths = (vol: Volume, src: string, srcStat: Stats, dest: string, recursive: boolean): void => {
-  const srcParent = pathResolve(pathDirname(src));
+  const srcParent = pathResolve(vol, pathDirname(src));
   const skipMissing = recursive && srcStat.isDirectory();
   let at = dest;
   for (
-    let parent = pathResolve(pathDirname(dest));
+    let parent = pathResolve(vol, pathDirname(dest));
     parent !== srcParent && parent !== '/';
     at = parent, parent = pathDirname(parent)
   ) {
@@ -579,8 +586,8 @@ const onLink = async (
     }
     throw error;
   }
-  if (resolvedDest[0] !== '/') resolvedDest = pathResolve(pathDirname(dest), resolvedDest);
-  if (isDirectory(vol, src) && isSrcSubdir(resolvedSrc, resolvedDest))
+  if (resolvedDest[0] !== '/') resolvedDest = pathResolve(vol, pathDirname(dest), resolvedDest);
+  if (isDirectory(vol, src) && isSrcSubdir(vol, resolvedSrc, resolvedDest))
     throw cpSystemError(
       'ERR_FS_CP_EINVAL',
       'cannot copy ' + resolvedSrc + ' to a subdirectory of self ' + resolvedDest,
@@ -588,7 +595,7 @@ const onLink = async (
       ERRNO.EINVAL,
       'EINVAL',
     );
-  if ((statOf(vol, src, true) as Stats).isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc))
+  if ((statOf(vol, src, true) as Stats).isDirectory() && isSrcSubdir(vol, resolvedDest, resolvedSrc))
     throw cpSystemError(
       'ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY',
       'cannot overwrite ' + resolvedDest + ' with ' + resolvedSrc,
