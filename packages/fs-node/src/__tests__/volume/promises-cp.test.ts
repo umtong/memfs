@@ -1,3 +1,4 @@
+import { Volume } from '../..';
 import { create } from '../util';
 
 describe('promises.cp', () => {
@@ -20,6 +21,16 @@ describe('promises.cp', () => {
 
     expect(vol.readFileSync('/foo.txt', 'utf8')).toBe('hello world');
     expect(vol.readFileSync('/bar.txt', 'utf8')).toBe('hello world');
+  });
+
+  it('resolves relative symlink targets against the virtual root unless verbatim', async () => {
+    const vol = Volume.fromJSON({ 'source.txt': 'content' }, '/', { process: { ...process, cwd: () => '/' } });
+    vol.symlinkSync('source.txt', 'link.txt');
+    await vol.promises.cp('link.txt', 'nested/copy.txt');
+    expect(vol.readlinkSync('/nested/copy.txt')).toBe('/source.txt');
+    expect(vol.readFileSync('/nested/copy.txt', 'utf8')).toBe('content');
+    await vol.promises.cp('link.txt', 'nested/verbatim.txt', { verbatimSymlinks: true });
+    expect(vol.readlinkSync('/nested/verbatim.txt')).toBe('source.txt');
   });
 
   it('copies a directory with recursive option', async () => {

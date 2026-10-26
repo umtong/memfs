@@ -1,3 +1,4 @@
+import { Volume } from '../..';
 import { create } from '../util';
 
 describe('cpSync(src, dest[, options])', () => {
@@ -20,6 +21,12 @@ describe('cpSync(src, dest[, options])', () => {
 
     expect(vol.readFileSync('/foo.txt', 'utf8')).toBe('hello world');
     expect(vol.readFileSync('/bar.txt', 'utf8')).toBe('hello world');
+  });
+
+  it.each(['/', '/project'])('resolves relative paths against volume cwd %s', cwd => {
+    const vol = Volume.fromJSON({ 'source.txt': 'content' }, cwd, { process: { ...process, cwd: () => cwd } });
+    vol.cpSync('source.txt', 'nested/copy.txt');
+    expect(vol.readFileSync(`${cwd}/nested/copy.txt`, 'utf8')).toBe('content');
   });
 
   it('copies a directory with recursive option', () => {

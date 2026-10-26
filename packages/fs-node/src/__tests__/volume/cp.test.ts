@@ -1,3 +1,4 @@
+import { Volume } from '../..';
 import { create } from '../util';
 
 describe('cp(src, dest[, options], callback)', () => {
@@ -22,6 +23,23 @@ describe('cp(src, dest[, options], callback)', () => {
       expect(vol.readFileSync('/foo.txt', 'utf8')).toBe('hello world');
       expect(vol.readFileSync('/bar.txt', 'utf8')).toBe('hello world');
       done();
+    });
+  });
+
+  it('resolves relative symlink targets against the volume cwd', done => {
+    const vol = Volume.fromJSON({ 'source.txt': 'content' }, '/project', {
+      process: { ...process, cwd: () => '/project' },
+    });
+    vol.symlinkSync('source.txt', 'link.txt');
+    vol.cp('link.txt', 'nested/copy.txt', err => {
+      if (err) return done(err);
+      try {
+        expect(vol.readlinkSync('/project/nested/copy.txt')).toBe('/project/source.txt');
+        expect(vol.readFileSync('/project/nested/copy.txt', 'utf8')).toBe('content');
+        done();
+      } catch (error) {
+        done(error);
+      }
     });
   });
 
